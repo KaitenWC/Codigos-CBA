@@ -192,10 +192,10 @@ y_ruido = y + ruido
 y_total = y_ruido.reshape(-1, 1)
 u_total = u.reshape(-1, 1)
 div = int(0.5*len(y_total))
-y_train = y_total[div:]
-u_train = u_total[div:]
-y_vali = y_total[:div]
-u_vali = u_total[:div]
+y_vali = y_total[div:]
+u_vali = u_total[div:]
+y_train = y_total[:div]
+u_train = u_total[:div]
 
 ylags = [1, 16]
 # ylags = [1, 13, 22, 26] #Sem Ruído
