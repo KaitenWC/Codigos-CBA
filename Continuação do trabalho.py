@@ -6,9 +6,10 @@ from bitarray import bitarray
 from random import randint
 from numpy.linalg import svd
 from scipy import signal
+from statistics import mode
 import seaborn as sns
 import pandas as pd
-
+import collections
 
 Tf = 3.1e-3
 Ts = Tf/4
@@ -70,53 +71,40 @@ prbs = prbs_sequence(10,100)
 prbs_01 = np.array(prbs.tolist(), dtype=float)
 prbs_11 = 2 * prbs_01 - 1
 
-a = ([1,-2,2,-1.97,1])
-b = ([0, 0.0028,-0.002,-0.002,0.0028])
-tempo = np.arange(len(prbs_11)) * Ts
+a = ([1, -2, 2, -1.97, 1])
+b = ([0, 0.0028, -0.002, -0.002, 0.0028])
+r = 2
 nlin = 65
 ncol = 34
-p_ini = 100
-Ay = np.zeros((nlin,ncol))
+p_ini = 500
+num_seeds=1000
 u = prbs_11
 y = signal.lfilter(b, a, u)
-Au = np.zeros((nlin,ncol))
 
 # ------------------------- Ruído -------------------------
 SNR_dB = 20
-#
 # # Potência do sinal
-Py = np.var(y[34:100])
-#
-# # Variância do ruído
-ruido_var = Py / (10 ** (SNR_dB / 10))
-# # np.random.seed(10) #Definindo um ruído fixo para todas as simulações
-# # Ruído branco Gaussiano
-# # ruido = np.sqrt(ruido_var) * np.random.randn(len(y))
+Py = np.mean(y**2)
+# # Potência do ruído
+Pruido = Py / (10 ** (SNR_dB / 10))
 # ruido = 0
+dpadrao = np.sqrt(Pruido)
+
 
 # ------------------------- Entrada -------------------------
-num_seeds = 100
-nlin = 65
-ncol = 34
-p_ini = 100
-r = 4
-a = [1, -2, 2, -1.97, 1]
-b = [0, 0.0028, -0.002, -0.002, 0.0028]
-
 resultados_criterio = []
-S_acumulado = []
+r_otimos = []
 
 
 
 for seed in range(1, num_seeds + 1):
     #Gerar Sinal e Saída
-    prbs = prbs_sequence(10, seed)  # Sua função de PRBS
+    prbs = prbs_sequence(10, seed)
     u = 2 * np.array(prbs.tolist(), dtype=float) - 1
     y = signal.lfilter(b, a, u)
 
     #Ruído
-    np.random.seed(seed)
-    ruido = np.sqrt(ruido_var) * np.random.randn(len(y))
+    ruido = np.random.normal(loc=0, scale=dpadrao, size=y.shape)
     y_ruido = y + ruido
 
 
@@ -124,7 +112,7 @@ for seed in range(1, num_seeds + 1):
     Ay = np.zeros((nlin, ncol))
     for k in range(nlin):
         it = p_ini + k
-        Ay[k, :] = -y_ruido[it - 1: it - 1 - ncol: -1]
+        Ay[k, :] = -y_ruido[it - 1 : it - ncol - 1: -1]
 
     U, S, Vt = np.linalg.svd(Ay, full_matrices=False)
     Vr = Vt[:r, :].T  # Mantendo apenas as r colunas principais
@@ -135,31 +123,59 @@ for seed in range(1, num_seeds + 1):
     criterio = 1 / np.abs(coluna_1)
 
     U, S, Vt = np.linalg.svd(Ay, full_matrices=False)
-    S_acumulado.append(S)
+
+    p = len(S)
+    erros = np.zeros(p)
+    # Ignora os extremos
+    erros[0] = np.inf
+    erros[-1] = np.inf
+    erros[1] = np.inf
+    erros[-2] = np.inf
+
+    # Testa todas as posições de corte 'q' possíveis (de 1 até 33)
+    for q in range(1, p - 1):
+        # Divide os valores em dois grupos no ponto 'q'
+        grupo_sinal = S[:q]
+        grupo_ruido = S[q:]
+
+        # Calcula o quanto os valores variam dentro de cada grupo
+        var_sinal = np.sum((grupo_sinal - np.mean(grupo_sinal)) ** 2)
+        var_ruido = np.sum((grupo_ruido - np.mean(grupo_ruido)) ** 2)
+
+        # O erro deste corte é a soma das variações
+        erros[q] = var_sinal + var_ruido
+
+    # O 'r' ideal é a posição que resultou no menor erro possível
+    r_otimo = np.argmin(erros)
+    r_otimos.append(r_otimo)
+
 
     #Armazenar os 34 valores para esta seed
     for i in range(ncol):
         resultados_criterio.append({
-            'Atraso': i + 1,
+            'Atraso': i + 1 ,
             'Valor_Criterio': criterio[i],
             'Seed': seed
         })
 
-#---------------------- VIOLIN PLOTS ----------------------
-S_medio = np.mean(S_acumulado, axis=0)
+#---------------------- BOX PLOTS ----------------------
+np.set_printoptions(suppress=True, precision=6)
 
-print("Valores singulares médios:", S_medio)
+r = mode(r_otimos)
 
+print(f"\n=> O ponto de corte ideal (fator r) calculado é: {r}")
+
+frequencias = collections.Counter(r_otimos)
+print(f"Frequência dos cortes encontrados nas {num_seeds} iterações: {frequencias}")
 
 
 df_criterio = pd.DataFrame(resultados_criterio)
 
 fig, ax = plt.subplots(figsize=(15, 6))
-# Usamos escala logarítmica no Y pois os picos de critério podem ser muito altos
-sns.violinplot(x='Atraso', y='Valor_Criterio', data=df_criterio, palette='magma')
+sns.boxplot(x='Atraso', y='Valor_Criterio', data=df_criterio)
 ax.set_yscale('log')
 
-ax.set_title("Distribution of the 'Criteria' Variable - 100 Seeds")
+ax.set_title("Distribution of the 'Criteria' Variable")
 ax.set_ylabel("Criterion Value")
 ax.set_xlabel("Lags")
 plt.grid(True, which="both", ls="-", alpha=0.2)
@@ -168,6 +184,9 @@ plt.grid(True, which="both", ls="-", alpha=0.2)
 from sysidentpy.model_structure_selection import FROLS
 from sysidentpy.basis_function import Polynomial
 from sysidentpy.metrics import root_relative_squared_error, root_mean_squared_error
+from sysidentpy.parameter_estimation import LeastSquares
+from sysidentpy.utils.display_results import results
+from sysidentpy.simulation import SimulateNARMAX
 
 y_ruido = y + ruido
 y_total = y_ruido.reshape(-1, 1)
@@ -178,80 +197,114 @@ u_train = u_total[div:]
 y_vali = y_total[:div]
 u_vali = u_total[:div]
 
-# ylags = [1, 13, 22, 26]
-ylags = [1, 4, 13, 22]
+ylags = [1, 16]
+# ylags = [1, 13, 22, 26] #Sem Ruído
 xlags = list(range(1, 35))
 basis_function = Polynomial(degree=1)
+estimator = LeastSquares(unbiased=True)
 model = FROLS(
     order_selection=False,
-    n_terms=35,
+    n_terms=37,
     ylag=ylags,
     xlag=xlags,
     basis_function=basis_function,
     model_type='NARMAX',
-    info_criteria='bic',
+    estimator=estimator,
 )
 
 model.fit(X=u_train, y=y_train)
-print("\n--- Modelo Identificado ---")
-# Mostra os atrasos escolhidos e seus coeficientes
-Cte= ~np.all(model.final_model == 0, axis=1)
+
+D= pd.DataFrame(
+    results(
+        model.final_model,
+        model.theta,
+        model.err,
+        model.n_terms,
+        err_precision=8,
+        dtype="sci",
+    ),
+    columns=["Regressors", "Parameters", "ERR"],
+)
+print(D)
+# print(f'\n Parâmetros do modelo: \n {model.theta}')
+
+cte = ~np.all(model.final_model == 0, axis=1)
+model.final_model = model.final_model[cte, :]
+model.theta = model.theta[cte, :]
+if model.err is not None and len(model.err) == len(cte):
+    model.err = model.err[cte]
+model.n_terms = model.final_model.shape[0]
+
+full_model_code = model.final_model.copy()
+reduced_model = full_model_code.copy()
 
 
-model.final_model = model.final_model[Cte]
-model.theta = model.theta[Cte]
+# Reestima os parâmetros mantendo a estrutura fixa em reduced_model
+simulator = SimulateNARMAX(
+    estimator=model.estimator,
+    elag=model.elag,
+    estimate_parameter=True,
+    model_type=model.model_type,
+    basis_function=model.basis_function,
+)
 
+_ = simulator.simulate(
+    X_train=u_train,
+    y_train=y_train,
+    X_test=u_train,
+    y_test=y_train,
+    model_code=reduced_model,
+)
+
+# Resultado final (modelo + parâmetros, após estimativa)
+F = pd.DataFrame(
+    results(
+        simulator.final_model,
+        simulator.theta,
+        simulator.err,
+        simulator.n_terms,
+        err_precision=8,
+        dtype="sci",
+    ),
+    columns=["Regressors", "Parameters", "ERR"],
+)
+print("Modelo sem a constante:\n",F)
+# print(f'\n Parâmetros do modelo: \n {simulator.theta}')
+# print(np.array(simulator.final_model))
 
 yhat = model.predict(X=u_vali, y=y_vali)
 
-
-for i, theta in enumerate(model.theta):
-    print(f"Termo {i+1}: {model.final_model[i]}  |  Coeficiente: {theta[0]:.4f}")
-
-
 rrse = root_relative_squared_error(y_vali, yhat)
-print(f"\nErro RRSE: {rrse:.5f}")
+print(f"\nErro RRSE: {rrse}")
 rmse = root_mean_squared_error(y_vali, yhat)
-
 print(f"RMSE: {rmse}")
 
 
-
-
 # ---------------------- RAÍZES ----------------------
-A_z = np.zeros(max(ylags) + 1)
-A_z[0] = 1.0
+raizes_eq16 = np.roots(a)
+magnitudes_eq16 = np.abs(raizes_eq16)
 
-# 2. Preenche os coeficientes buscando no modelo
-for i, regressor in enumerate(model.final_model):
-    # Filtra: tem que ser linear (tamanho 1) e ser da saída 'y' (código entre 1000 e 1999)
-    if regressor[0] < 2000:
-        lag = regressor[0] % 1000  # Descobre qual é o atraso (ex: 1002 vira 2)
-        A_z[lag] = -model.theta[i][0]  # Inverte o sinal e guarda no polinômio
-# 2. Calcular as raízes (pólos) e suas magnitudes
-raizes = np.roots(A_z)
-magnitudes = np.abs(raizes)
-
-print("\n--- Pólos Estimados (Raízes do Denominador) ---")
-for i, (raiz, mag) in enumerate(zip(raizes, magnitudes)):
+print("\n--- Pólos da Planta Original (Equação 16) ---")
+for i, (raiz, mag) in enumerate(zip(raizes_eq16, magnitudes_eq16)):
     print(f"Pólo {i+1:02d}: {raiz:+.4f} | Magnitude: {mag:.4f}")
+
 # ---------------------- PLOTS ----------------------
 
 plt.figure(figsize=(14, 5))
-plt.plot(y_vali[:200], label='Real data', color='black')
-plt.plot(yhat[:200], label='SysIdentPy Model', color='red', linestyle='--')
+plt.plot(y_vali[:1000], label='Real data', color='black')
+plt.plot(yhat[:1000], label='SysIdentPy Model', color='red', linestyle='--')
 plt.title("Validation of the estimated model")
 plt.legend()
 plt.grid(True)
 plt.show()
 
 
-print("\n--- Valores Singulares (S) Saída ---")
-print(S[:8])
+# print("\n--- Valores Singulares (S) Saída ---")
+# print(S[:8])
 
 
-amp_sinal = max(y)
-amp_ruido = max(ruido)
+amp_sinal = np.max(y)
+amp_ruido = np.max(ruido)
 
 print("Sinal", amp_sinal)
 print("Ruído", amp_ruido)

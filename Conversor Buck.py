@@ -22,7 +22,7 @@ print(f"Dados de validação carregados: {len(y_vali)} amostras")
 nlin = 50
 ncol = 34
 p_ini = 50
-r = 2
+r = 3
 Ay = np.zeros((nlin,ncol))
 u = u_train
 y = y_train
@@ -60,13 +60,13 @@ y_treino = y_train.reshape(-1,1)
 u_valido = u_vali.reshape(-1,1)
 y_valido = y_vali.reshape(-1,1)
 
-ylags = [1, 2, 3]
-# xlags = list(range(1, 34))
-xlags = [1, 2]
+ylags = [1, 15, 30]
+xlags = list(range(1, 35))
+# xlags = [1, 2]
 basis_function = Polynomial(degree=1)
 model = FROLS(
     order_selection=False,
-    n_terms=5,
+    n_terms=37,
     ylag=ylags,
     xlag=xlags,
     basis_function=basis_function,
